@@ -1,0 +1,239 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Inventory Count — StockSense IMS</title>
+  <link rel="stylesheet" href="/css/main.css" />
+</head>
+<body>
+<div class="app-layout">
+  <div class="sidebar" id="sidebar"></div>
+  <div class="main-content">
+    <div class="page-header">
+      <div class="page-header-left">
+        <h1>Inventory Adjustments</h1>
+        <p>Reconcile physical counts with system quantities</p>
+      </div>
+      <div class="page-header-right">
+        <button class="btn btn-primary" id="new-adj-btn">+ New Adjustment</button>
+      </div>
+    </div>
+    <div class="page-content">
+      <div class="toolbar">
+        <div class="search-wrapper">
+          <span class="search-icon">🔍</span>
+          <input class="search-input" id="search" type="text" placeholder="Search adjustments…" />
+        </div>
+        <select class="form-control form-select" id="filter-status" style="width:160px">
+          <option value="">All Statuses</option>
+          <option>DRAFT</option><option>VALIDATED</option><option>CANCELED</option>
+        </select>
+        <div class="toolbar-spacer"></div>
+      </div>
+      <div class="card">
+        <div class="table-wrapper" id="adj-table">
+          <div style="text-align:center;padding:60px"><div class="spinner" style="width:36px;height:36px;border-width:3px"></div></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="modal-overlay" id="create-modal" role="dialog" aria-modal="true" aria-hidden="true">
+  <div class="modal">
+    <div class="modal-header">
+      <h2 class="modal-title">New Inventory Adjustment</h2>
+      <button class="modal-close" onclick="closeModal('create-modal')">✕</button>
+    </div>
+    <div class="modal-body">
+      <div id="create-alert" class="alert alert-danger alert-hidden"></div>
+      <div class="form-group" id="a-wh-group">
+        <label class="form-label">Warehouse <span>*</span></label>
+        <select class="form-control form-select" id="a-warehouse"></select>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Product <span>*</span></label>
+        <select class="form-control form-select" id="a-product" required>
+          <option value="">Select product…</option>
+        </select>
+      </div>
+      <div id="a-system-qty-row" class="form-group" style="display:none">
+        <label class="form-label">System Quantity</label>
+        <input class="form-control" id="a-system-qty" disabled />
+        <div class="form-hint">Current quantity in the system</div>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Actual (Counted) Quantity <span>*</span></label>
+        <input class="form-control" id="a-actual" type="number" min="0" required placeholder="Physical count" />
+      </div>
+      <div id="a-diff-row" class="form-group" style="display:none">
+        <label class="form-label">Difference</label>
+        <input class="form-control" id="a-diff" disabled />
+      </div>
+      <div class="form-group">
+        <label class="form-label">Reason</label>
+        <input class="form-control" id="a-reason" placeholder="e.g. Physical count, damage, theft…" />
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary" onclick="closeModal('create-modal')">Cancel</button>
+      <button class="btn btn-primary" id="create-save-btn">Create Adjustment</button>
+    </div>
+  </div>
+</div>
+
+<script src="/js/api.js"></script>
+<script src="/js/utils.js"></script>
+<script src="/js/nav.js"></script>
+<script>
+  if (!requireAuth()) {}
+  const user = API.getUser();
+  NAV.render('sidebar');
+
+  let adjustments = [], products = [], warehouses = [], stock = [];
+
+  async function load() {
+    try {
+      [adjustments, products, warehouses, stock] = await Promise.all([
+        API.get('/adjustments'),
+        API.get('/products'),
+        API.get('/warehouses'),
+        API.get('/stock'),
+      ]);
+      const sel = document.getElementById('a-warehouse');
+      if (user.role === 'STAFF') {
+        document.getElementById('a-wh-group').style.display = 'none';
+      } else {
+        sel.innerHTML = '<option value="">Select warehouse…</option>' +
+          warehouses.map(w => `<option value="${w.id}">${escHtml(w.name)}</option>`).join('');
+      }
+      document.getElementById('a-product').innerHTML = '<option value="">Select product…</option>' +
+        products.map(p => `<option value="${p.id}">${escHtml(p.name)} (${p.sku})</option>`).join('');
+      renderTable();
+    } catch (err) { toast(err.message, 'error'); }
+  }
+
+  function renderTable() {
+    const q = document.getElementById('search').value.toLowerCase();
+    const st = document.getElementById('filter-status').value;
+    let rows = adjustments;
+    if (q) rows = rows.filter(r => (r.product_name||'').toLowerCase().includes(q) || (r.adjustment_number||'').toLowerCase().includes(q));
+    if (st) rows = rows.filter(r => r.status === st);
+
+    if (!rows.length) {
+      document.getElementById('adj-table').innerHTML = `<div class="empty-state"><div class="empty-state-icon">🔄</div><h3>No adjustments found</h3></div>`;
+      return;
+    }
+    let html = `<table><thead><tr><th>Adj #</th><th>Product</th><th>Warehouse</th><th>System Qty</th><th>Actual Qty</th><th>Difference</th><th>Status</th><th>Actions</th></tr></thead><tbody>`;
+    rows.forEach(a => {
+      const diff = a.difference;
+      const diffClass = diff > 0 ? 'qty-ok' : diff < 0 ? 'qty-zero' : 'text-muted';
+      html += `<tr>
+        <td><strong style="color:var(--primary)">${escHtml(a.adjustment_number)}</strong></td>
+        <td>${escHtml(a.product_name)}</td>
+        <td>${escHtml(a.warehouse_name)}</td>
+        <td>${a.system_quantity}</td>
+        <td>${a.actual_quantity}</td>
+        <td class="${diffClass}">${diff > 0 ? '+' : ''}${diff}</td>
+        <td>${statusBadge(a.status)}</td>
+        <td>
+          ${a.status === 'DRAFT' ? `<button class="btn btn-sm btn-success" onclick="validateAdj(${a.id})">✅ Validate</button>` : ''}
+          ${a.status === 'DRAFT' ? `<button class="btn btn-sm btn-secondary" onclick="cancelAdj(${a.id})">Cancel</button>` : ''}
+        </td>
+      </tr>`;
+    });
+    html += `</tbody></table>`;
+    document.getElementById('adj-table').innerHTML = html;
+  }
+
+  document.getElementById('search').addEventListener('input', renderTable);
+  document.getElementById('filter-status').addEventListener('change', renderTable);
+
+  // Auto-fill system qty when product selected
+  function getSystemQty(productId, warehouseId) {
+    if (!productId || !warehouseId) return null;
+    const s = stock.find(s => s.product_id == productId && s.warehouse_id == warehouseId);
+    return s ? s.quantity : 0;
+  }
+
+  function updateSystemQty() {
+    const pid = document.getElementById('a-product').value;
+    const wid = user.role === 'STAFF' ? user.warehouse_id : document.getElementById('a-warehouse').value;
+    if (!pid || !wid) return;
+    const sysQty = getSystemQty(parseInt(pid), parseInt(wid));
+    document.getElementById('a-system-qty').value = sysQty ?? '—';
+    document.getElementById('a-system-qty-row').style.display = 'block';
+    updateDiff();
+  }
+
+  function updateDiff() {
+    const sysQty = parseInt(document.getElementById('a-system-qty').value);
+    const actual = parseInt(document.getElementById('a-actual').value) || 0;
+    if (!isNaN(sysQty)) {
+      const diff = actual - sysQty;
+      document.getElementById('a-diff').value = (diff > 0 ? '+' : '') + diff;
+      document.getElementById('a-diff-row').style.display = 'block';
+    }
+  }
+
+  document.getElementById('a-product').addEventListener('change', updateSystemQty);
+  document.getElementById('a-warehouse').addEventListener('change', updateSystemQty);
+  document.getElementById('a-actual').addEventListener('input', updateDiff);
+
+  document.getElementById('new-adj-btn').addEventListener('click', () => {
+    document.getElementById('a-product').value = '';
+    document.getElementById('a-actual').value = '';
+    document.getElementById('a-reason').value = '';
+    document.getElementById('a-system-qty-row').style.display = 'none';
+    document.getElementById('a-diff-row').style.display = 'none';
+    if (user.role !== 'STAFF') document.getElementById('a-warehouse').value = '';
+    hideAlert('create-alert');
+    openModal('create-modal');
+  });
+
+  document.getElementById('create-save-btn').addEventListener('click', async () => {
+    const product_id = document.getElementById('a-product').value;
+    const actual_quantity = parseInt(document.getElementById('a-actual').value);
+    const reason = document.getElementById('a-reason').value.trim();
+    const warehouse_id = user.role === 'STAFF' ? user.warehouse_id : document.getElementById('a-warehouse').value;
+
+    if (!product_id) { showAlert('create-alert', 'Select a product'); return; }
+    if (isNaN(actual_quantity) || actual_quantity < 0) { showAlert('create-alert', 'Valid actual quantity required'); return; }
+    if (user.role === 'MANAGER' && !warehouse_id) { showAlert('create-alert', 'Select a warehouse'); return; }
+
+    const btn = document.getElementById('create-save-btn');
+    btn.disabled = true;
+    try {
+      await API.post('/adjustments', { product_id: parseInt(product_id), actual_quantity, reason, warehouse_id: warehouse_id ? parseInt(warehouse_id) : undefined });
+      closeModal('create-modal');
+      toast('Adjustment created!', 'success');
+      await load();
+    } catch (err) { showAlert('create-alert', err.message); }
+    btn.disabled = false;
+  });
+
+  async function validateAdj(id) {
+    if (!confirm('Validate this adjustment? Stock will be updated to the actual quantity.')) return;
+    showLoading();
+    try {
+      await API.post(`/adjustments/${id}/validate`);
+      toast('Adjustment validated! Stock updated.', 'success');
+      await load();
+    } catch (err) { toast(err.message, 'error'); }
+    hideLoading();
+  }
+
+  async function cancelAdj(id) {
+    if (!confirm('Cancel this adjustment?')) return;
+    try {
+      await API.post(`/adjustments/${id}/cancel`);
+      toast('Adjustment canceled', 'warning');
+      await load();
+    } catch (err) { toast(err.message, 'error'); }
+  }
+
+  load();
+</script>
+</body>
+</html>
