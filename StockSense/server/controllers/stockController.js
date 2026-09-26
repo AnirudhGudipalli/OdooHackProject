@@ -1,34 +1,82 @@
-const db = require('../store');
 
-function getAll(req, res) {
-  let rows = db.stock;
-  if (req.user.role === 'STAFF') {
-    rows = rows.filter(s => s.warehouse_id === req.user.warehouse_id);
+const db = require('../db');
+
+async function getAll(req, res) {
+  try {
+    let query = `
+      SELECT
+        s.id,
+        s.product_id,
+        s.warehouse_id,
+        s.quantity,
+        s.updated_at,
+        p.name AS product_name,
+        p.sku,
+        p.unit,
+        p.reorder_level,
+        c.name AS category_name,
+        w.name AS warehouse_name
+      FROM stock s
+      JOIN products p
+        ON p.id = s.product_id
+      JOIN warehouses w
+        ON w.id = s.warehouse_id
+      LEFT JOIN categories c
+        ON c.id = p.category_id
+    `;
+
+    const params = [];
+
+    if (req.user.role === 'STAFF') {
+      query += ` WHERE s.warehouse_id = $1`;
+      params.push(req.user.warehouse_id);
+    }
+
+    query += ` ORDER BY s.id`;
+
+    const result = await db.query(query, params);
+
+    res.json(result.rows);
+  } catch (err) {
+    console.error('Get stock error:', err);
+
+    res.status(500).json({
+      error: 'Failed to fetch stock'
+    });
   }
-  const enriched = rows.map(s => {
-    const p = db.products.find(p => p.id === s.product_id) || {};
-    const w = db.warehouses.find(w => w.id === s.warehouse_id) || {};
-    const c = db.categories.find(c => c.id === p.category_id) || {};
-    return {
-      ...s,
-      product_name: p.name || 'Unknown',
-      sku: p.sku || '',
-      unit: p.unit || '',
-      reorder_level: p.reorder_level || 0,
-      category_name: c.name || null,
-      warehouse_name: w.name || 'Unknown',
-    };
-  });
-  res.json(enriched);
 }
 
-function getByProduct(req, res) {
-  const pid = parseInt(req.params.productId);
-  const rows = db.stock.filter(s => s.product_id === pid).map(s => ({
-    ...s,
-    warehouse_name: db.warehouseName(s.warehouse_id),
-  }));
-  res.json(rows);
+async function getByProduct(req, res) {
+  const productId = parseInt(req.params.productId);
+
+  try {
+    const result = await db.query(
+      `SELECT
+         s.id,
+         s.product_id,
+         s.warehouse_id,
+         s.quantity,
+         s.updated_at,
+         w.name AS warehouse_name
+       FROM stock s
+       JOIN warehouses w
+         ON w.id = s.warehouse_id
+       WHERE s.product_id = $1
+       ORDER BY s.id`,
+      [productId]
+    );
+
+    res.json(result.rows);
+  } catch (err) {
+    console.error('Get product stock error:', err);
+
+    res.status(500).json({
+      error: 'Failed to fetch product stock'
+    });
+  }
 }
 
-module.exports = { getAll, getByProduct };
+module.exports = {
+  getAll,
+  getByProduct
+};

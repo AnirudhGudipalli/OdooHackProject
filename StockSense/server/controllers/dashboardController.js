@@ -1,113 +1,375 @@
-const db = require('../store');
 
-function getDashboard(req, res) {
-  if (req.user.role === 'MANAGER') return getManagerDashboard(req, res);
-  return getStaffDashboard(req, res);
+const db = require('../db');
+const bcrypt = require('bcryptjs');
+
+async function getDashboard(req, res) {
+  try {
+    if (req.user.role === 'MANAGER') {
+      return await getManagerDashboard(req, res);
+    }
+
+    return await getStaffDashboard(req, res);
+  } catch (err) {
+    console.error('Dashboard error:', err);
+
+    res.status(500).json({
+      error: 'Failed to load dashboard'
+    });
+  }
 }
 
-function getManagerDashboard(req, res) {
-  const totalStock = db.stock.reduce((sum, s) => sum + s.quantity, 0);
+async function getManagerDashboard(req, res) {
+  const kpisResult = await db.query(`
+    SELECT
+      COALESCE((SELECT SUM(quantity) FROM stock), 0) AS total_stock,
 
-  const lowStockItems = db.stock.filter(s => {
-    const p = db.products.find(p => p.id === s.product_id);
-    return p && s.quantity > 0 && s.quantity <= p.reorder_level;
-  }).length;
+      COALESCE((
+        SELECT COUNT(*)
+        FROM stock s
+        JOIN products p ON p.id = s.product_id
+        WHERE s.quantity > 0
+          AND s.quantity <= p.reorder_level
+      ), 0) AS low_stock_items,
 
-  const outOfStockItems = db.stock.filter(s => s.quantity === 0).length;
+      COALESCE((
+        SELECT COUNT(*)
+        FROM stock
+        WHERE quantity = 0
+      ), 0) AS out_of_stock_items,
 
-  const pendingReceipts = db.receipts.filter(r => !['DONE', 'CANCELED'].includes(r.status)).length;
-  const pendingDeliveries = db.deliveries.filter(d => !['DONE', 'CANCELED'].includes(d.status)).length;
+      COALESCE((
+        SELECT COUNT(*)
+        FROM receipts
+        WHERE status NOT IN ('DONE', 'CANCELED')
+      ), 0) AS pending_receipts,
 
-  const recentMovements = db.movements.slice().reverse().slice(0, 10).map(m => ({
-    ...m,
-    product_name: db.productName(m.product_id),
-    warehouse_name: db.warehouseName(m.warehouse_id),
-    performed_by_name: db.userName(m.performed_by),
-  }));
+      COALESCE((
+        SELECT COUNT(*)
+        FROM deliveries
+        WHERE status NOT IN ('DONE', 'CANCELED')
+      ), 0) AS pending_deliveries
+  `);
 
-  const recentReceipts = db.receipts.slice().reverse().slice(0, 5).map(r => ({
-    ...r,
-    warehouse_name: db.warehouseName(r.warehouse_id),
-  }));
+  const movementsResult = await db.query(`
+    SELECT
+      m.*,
+      p.name AS product_name,
+      w.name AS warehouse_name,
+      u.name AS performed_by_name
+    FROM stock_movements m
+    JOIN products p ON p.id = m.product_id
+    JOIN warehouses w ON w.id = m.warehouse_id
+    LEFT JOIN users u ON u.id = m.performed_by
+    ORDER BY m.id DESC
+    LIMIT 10
+  `);
 
-  const recentDeliveries = db.deliveries.slice().reverse().slice(0, 5).map(d => ({
-    ...d,
-    warehouse_name: db.warehouseName(d.warehouse_id),
-  }));
+  const receiptsResult = await db.query(`
+    SELECT
+      r.*,
+      w.name AS warehouse_name
+    FROM receipts r
+    JOIN warehouses w ON w.id = r.warehouse_id
+    ORDER BY r.id DESC
+    LIMIT 5
+  `);
 
-  const warehouseSummary = db.warehouses.map(w => {
-    const whStock = db.stock.filter(s => s.warehouse_id === w.id);
-    return {
-      id: w.id,
-      name: w.name,
-      location: w.location,
-      total_stock: whStock.reduce((sum, s) => sum + s.quantity, 0),
-      out_of_stock: whStock.filter(s => s.quantity === 0).length,
-    };
-  });
+  const deliveriesResult = await db.query(`
+    SELECT
+      d.*,
+      w.name AS warehouse_name
+    FROM deliveries d
+    JOIN warehouses w ON w.id = d.warehouse_id
+    ORDER BY d.id DESC
+    LIMIT 5
+  `);
+
+  const warehouseResult = await db.query(`
+    SELECT
+      w.id,
+      w.name,
+      w.location,
+      COALESCE(SUM(s.quantity), 0) AS total_stock,
+      COUNT(s.id) FILTER (
+        WHERE s.quantity = 0
+      ) AS out_of_stock
+    FROM warehouses w
+    LEFT JOIN stock s
+      ON s.warehouse_id = w.id
+    GROUP BY w.id, w.name, w.location
+    ORDER BY w.id
+  `);
+
+  const kpis = kpisResult.rows[0];
 
   res.json({
-    kpis: { total_stock: totalStock, low_stock_items: lowStockItems, out_of_stock_items: outOfStockItems, pending_receipts: pendingReceipts, pending_deliveries: pendingDeliveries },
-    recent_movements: recentMovements,
-    recent_receipts: recentReceipts,
-    recent_deliveries: recentDeliveries,
-    warehouse_summary: warehouseSummary,
+    kpis: {
+      total_stock: Number(kpis.total_stock),
+      low_stock_items: Number(kpis.low_stock_items),
+      out_of_stock_items: Number(kpis.out_of_stock_items),
+      pending_receipts: Number(kpis.pending_receipts),
+      pending_deliveries: Number(kpis.pending_deliveries)
+    },
+
+    recent_movements: movementsResult.rows,
+
+    recent_receipts: receiptsResult.rows,
+
+    recent_deliveries: deliveriesResult.rows,
+
+    warehouse_summary: warehouseResult.rows.map(w => ({
+      ...w,
+      total_stock: Number(w.total_stock),
+      out_of_stock: Number(w.out_of_stock)
+    }))
   });
 }
 
-function getStaffDashboard(req, res) {
-  const whId = req.user.warehouse_id;
-  if (!whId) return res.status(400).json({ error: 'No warehouse assigned' });
+async function getStaffDashboard(req, res) {
+  const warehouseId = req.user.warehouse_id;
 
-  const wh = db.warehouses.find(w => w.id === whId);
-  const whStock = db.stock.filter(s => s.warehouse_id === whId);
+  if (!warehouseId) {
+    return res.status(400).json({
+      error: 'No warehouse assigned'
+    });
+  }
 
-  const totalStock = whStock.reduce((sum, s) => sum + s.quantity, 0);
-  const lowStockItems = whStock.filter(s => {
-    const p = db.products.find(p => p.id === s.product_id);
-    return p && s.quantity > 0 && s.quantity <= p.reorder_level;
-  }).length;
-  const outOfStockItems = whStock.filter(s => s.quantity === 0).length;
-  const pendingReceipts = db.receipts.filter(r => r.warehouse_id === whId && !['DONE', 'CANCELED'].includes(r.status)).length;
-  const pendingDeliveries = db.deliveries.filter(d => d.warehouse_id === whId && !['DONE', 'CANCELED'].includes(d.status)).length;
+  const warehouseResult = await db.query(
+    `
+      SELECT
+        id,
+        name,
+        location,
+        created_at
+      FROM warehouses
+      WHERE id = $1
+    `,
+    [warehouseId]
+  );
 
-  const recentMovements = db.movements.filter(m => m.warehouse_id === whId).slice().reverse().slice(0, 8).map(m => ({
-    ...m,
-    product_name: db.productName(m.product_id),
-    performed_by_name: db.userName(m.performed_by),
-  }));
+  if (warehouseResult.rows.length === 0) {
+    return res.status(404).json({
+      error: 'Warehouse not found'
+    });
+  }
+
+  const kpisResult = await db.query(
+    `
+      SELECT
+        COALESCE(SUM(s.quantity), 0) AS total_stock,
+
+        COUNT(*) FILTER (
+          WHERE s.quantity > 0
+            AND s.quantity <= p.reorder_level
+        ) AS low_stock_items,
+
+        COUNT(*) FILTER (
+          WHERE s.quantity = 0
+        ) AS out_of_stock_items
+      FROM stock s
+      JOIN products p
+        ON p.id = s.product_id
+      WHERE s.warehouse_id = $1
+    `,
+    [warehouseId]
+  );
+
+  const pendingResult = await db.query(
+    `
+      SELECT
+        (SELECT COUNT(*)
+         FROM receipts
+         WHERE warehouse_id = $1
+           AND status NOT IN ('DONE', 'CANCELED')
+        ) AS pending_receipts,
+
+        (SELECT COUNT(*)
+         FROM deliveries
+         WHERE warehouse_id = $1
+           AND status NOT IN ('DONE', 'CANCELED')
+        ) AS pending_deliveries
+    `,
+    [warehouseId]
+  );
+
+  const movementsResult = await db.query(
+    `
+      SELECT
+        m.*,
+        p.name AS product_name,
+        u.name AS performed_by_name
+      FROM stock_movements m
+      JOIN products p
+        ON p.id = m.product_id
+      LEFT JOIN users u
+        ON u.id = m.performed_by
+      WHERE m.warehouse_id = $1
+      ORDER BY m.id DESC
+      LIMIT 8
+    `,
+    [warehouseId]
+  );
+
+  const kpis = kpisResult.rows[0];
+  const pending = pendingResult.rows[0];
 
   res.json({
-    warehouse: wh,
-    kpis: { total_stock: totalStock, low_stock_items: lowStockItems, out_of_stock_items: outOfStockItems, pending_receipts: pendingReceipts, pending_deliveries: pendingDeliveries },
-    recent_movements: recentMovements,
+    warehouse: warehouseResult.rows[0],
+
+    kpis: {
+      total_stock: Number(kpis.total_stock),
+      low_stock_items: Number(kpis.low_stock_items),
+      out_of_stock_items: Number(kpis.out_of_stock_items),
+      pending_receipts: Number(pending.pending_receipts),
+      pending_deliveries: Number(pending.pending_deliveries)
+    },
+
+    recent_movements: movementsResult.rows
   });
 }
 
-function getProfile(req, res) {
-  const user = db.users.find(u => u.id === req.user.id);
-  if (!user) return res.status(404).json({ error: 'User not found' });
-  const wh = db.warehouses.find(w => w.id === user.warehouse_id);
-  res.json({ id: user.id, name: user.name, email: user.email, role: user.role, warehouse_id: user.warehouse_id, warehouse_name: wh ? wh.name : null, created_at: user.created_at });
+async function getProfile(req, res) {
+  try {
+    const result = await db.query(
+      `
+        SELECT
+          u.id,
+          u.name,
+          u.email,
+          u.role,
+          u.warehouse_id,
+          w.name AS warehouse_name,
+          u.created_at
+        FROM users u
+        LEFT JOIN warehouses w
+          ON w.id = u.warehouse_id
+        WHERE u.id = $1
+      `,
+      [req.user.id]
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({
+        error: 'User not found'
+      });
+    }
+
+    res.json(result.rows[0]);
+  } catch (err) {
+    console.error('Get profile error:', err);
+
+    res.status(500).json({
+      error: 'Failed to get profile'
+    });
+  }
 }
 
 async function updateProfile(req, res) {
-  const user = db.users.find(u => u.id === req.user.id);
-  if (!user) return res.status(404).json({ error: 'User not found' });
+  try {
+    const { name, email, password } = req.body;
 
-  const { name, email, password } = req.body;
-  if (email && email.toLowerCase() !== user.email) {
-    if (db.users.find(u => u.email === email.toLowerCase() && u.id !== user.id))
-      return res.status(409).json({ error: 'Email already in use' });
-    user.email = email.toLowerCase();
+    const currentResult = await db.query(
+      `
+        SELECT *
+        FROM users
+        WHERE id = $1
+      `,
+      [req.user.id]
+    );
+
+    if (currentResult.rows.length === 0) {
+      return res.status(404).json({
+        error: 'User not found'
+      });
+    }
+
+    const user = currentResult.rows[0];
+
+    if (email && email.toLowerCase() !== user.email) {
+      const existing = await db.query(
+        `
+          SELECT id
+          FROM users
+          WHERE LOWER(email) = LOWER($1)
+            AND id <> $2
+        `,
+        [
+          email,
+          user.id
+        ]
+      );
+
+      if (existing.rows.length > 0) {
+        return res.status(409).json({
+          error: 'Email already in use'
+        });
+      }
+    }
+
+    const newName = name || user.name;
+    const newEmail = email
+      ? email.toLowerCase()
+      : user.email;
+
+    let newPassword = user.password;
+
+    if (password) {
+      newPassword = await bcrypt.hash(password, 10);
+    }
+
+    const result = await db.query(
+      `
+        UPDATE users
+        SET
+          name = $1,
+          email = $2,
+          password = $3
+        WHERE id = $4
+        RETURNING
+          id,
+          name,
+          email,
+          role,
+          warehouse_id,
+          created_at
+      `,
+      [
+        newName,
+        newEmail,
+        newPassword,
+        user.id
+      ]
+    );
+
+    const updatedUser = result.rows[0];
+
+    const warehouseResult = await db.query(
+      `
+        SELECT name
+        FROM warehouses
+        WHERE id = $1
+      `,
+      [updatedUser.warehouse_id]
+    );
+
+    res.json({
+      ...updatedUser,
+      warehouse_name:
+        warehouseResult.rows.length > 0
+          ? warehouseResult.rows[0].name
+          : null
+    });
+  } catch (err) {
+    console.error('Update profile error:', err);
+
+    res.status(500).json({
+      error: 'Failed to update profile'
+    });
   }
-  if (name) user.name = name;
-  if (password) {
-    const bcrypt = require('bcryptjs');
-    user.password = await bcrypt.hash(password, 10);
-  }
-  const wh = db.warehouses.find(w => w.id === user.warehouse_id);
-  res.json({ id: user.id, name: user.name, email: user.email, role: user.role, warehouse_id: user.warehouse_id, warehouse_name: wh ? wh.name : null });
 }
 
-module.exports = { getDashboard, getProfile, updateProfile };
+module.exports = {
+  getDashboard,
+  getProfile,
+  updateProfile
+};

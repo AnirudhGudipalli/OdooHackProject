@@ -1,19 +1,53 @@
-const db = require('../store');
 
-function getAll(req, res) {
-  let rows = db.movements;
-  if (req.user.role === 'STAFF') rows = rows.filter(m => m.warehouse_id === req.user.warehouse_id);
+const db = require('../db');
 
-  const enriched = rows.map(m => ({
-    ...m,
-    product_name: db.productName(m.product_id),
-    sku: db.products.find(p => p.id === m.product_id)?.sku || '',
-    warehouse_name: db.warehouseName(m.warehouse_id),
-    performed_by_name: db.userName(m.performed_by),
-  }));
+async function getAll(req, res) {
+  try {
+    let query = `
+      SELECT
+        m.id,
+        m.product_id,
+        m.warehouse_id,
+        m.movement_type,
+        m.quantity,
+        m.reference_type,
+        m.reference_id,
+        m.performed_by,
+        m.created_at,
+        p.name AS product_name,
+        p.sku,
+        w.name AS warehouse_name,
+        u.name AS performed_by_name
+      FROM stock_movements m
+      JOIN products p
+        ON p.id = m.product_id
+      JOIN warehouses w
+        ON w.id = m.warehouse_id
+      LEFT JOIN users u
+        ON u.id = m.performed_by
+    `;
 
-  // Return newest first
-  res.json(enriched.slice().reverse());
+    const params = [];
+
+    if (req.user.role === 'STAFF') {
+      query += ` WHERE m.warehouse_id = $1`;
+      params.push(req.user.warehouse_id);
+    }
+
+    query += ` ORDER BY m.id DESC`;
+
+    const result = await db.query(query, params);
+
+    res.json(result.rows);
+  } catch (err) {
+    console.error('Get movements error:', err);
+
+    res.status(500).json({
+      error: 'Failed to fetch stock movements'
+    });
+  }
 }
 
-module.exports = { getAll };
+module.exports = {
+  getAll
+};
