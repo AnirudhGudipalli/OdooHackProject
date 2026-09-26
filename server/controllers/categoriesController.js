@@ -19,8 +19,8 @@ async function getAll(req, res) {
 async function create(req, res) {
   const { name, description } = req.body;
 
-  if (!name) {
-    return res.status(400).json({ error: 'name is required' });
+  if (!name || !name.trim()) {
+    return res.status(400).json({ error: 'Category name is required' });
   }
 
   try {
@@ -28,7 +28,7 @@ async function create(req, res) {
       `SELECT id
        FROM categories
        WHERE LOWER(name) = LOWER($1)`,
-      [name]
+      [name.trim()]
     );
 
     if (existing.rows.length > 0) {
@@ -55,7 +55,7 @@ async function create(req, res) {
     }
 
     res.status(500).json({
-      error: 'Failed to create category'
+      error: 'Failed to create the category'
     });
   }
 }
