@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Warehouses — StockSense IMS</title>
+  <link rel="stylesheet" href="/css/main.css" />
+</head>
+<body>
+<div class="app-layout">
+  <div class="sidebar" id="sidebar"></div>
+  <div class="main-content">
+    <div class="page-header">
+      <div class="page-header-left">
+        <h1>Warehouses</h1>
+        <p>Manage your company's warehouse locations</p>
+      </div>
+      <div class="page-header-right">
+        <button class="btn btn-primary" id="new-wh-btn">+ New Warehouse</button>
+      </div>
+    </div>
+    <div class="page-content">
+      <div id="wh-content">
+        <div style="text-align:center;padding:60px"><div class="spinner" style="width:36px;height:36px;border-width:3px"></div></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="modal-overlay" id="wh-modal" role="dialog" aria-modal="true" aria-hidden="true">
+  <div class="modal" style="max-width:460px">
+    <div class="modal-header">
+      <h2 class="modal-title" id="wh-modal-title">New Warehouse</h2>
+      <button class="modal-close" onclick="closeModal('wh-modal')">✕</button>
+    </div>
+    <div class="modal-body">
+      <div id="wh-alert" class="alert alert-danger alert-hidden"></div>
+      <div class="form-group">
+        <label class="form-label">Warehouse Name <span>*</span></label>
+        <input class="form-control" id="wh-name" required placeholder="e.g. Mumbai Central Warehouse" />
+      </div>
+      <div class="form-group">
+        <label class="form-label">Location <span>*</span></label>
+        <input class="form-control" id="wh-location" required placeholder="e.g. Mumbai, Maharashtra, India" />
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary" onclick="closeModal('wh-modal')">Cancel</button>
+      <button class="btn btn-primary" id="wh-save-btn">Save</button>
+    </div>
+  </div>
+</div>
+
+<script src="/js/api.js"></script>
+<script src="/js/utils.js"></script>
+<script src="/js/nav.js"></script>
+<script>
+  if (!requireAuth()) {}
+  const user = API.getUser();
+  NAV.render('sidebar');
+
+  let warehouses = [], editId = null;
+
+  async function load() {
+    try {
+      const [whs, stock] = await Promise.all([
+        API.get('/warehouses'),
+        API.get('/stock'),
+      ]);
+      warehouses = whs;
+
+      // Aggregate stock per warehouse
+      const whStock = {};
+      stock.forEach(s => {
+        if (!whStock[s.warehouse_id]) whStock[s.warehouse_id] = { total: 0, products: 0, zero: 0 };
+        whStock[s.warehouse_id].total += parseInt(s.quantity);
+        whStock[s.warehouse_id].products++;
+        if (s.quantity == 0) whStock[s.warehouse_id].zero++;
+      });
+
+      let html = `<div class="wh-grid">`;
+      if (!warehouses.length) {
+        html = `<div class="empty-state"><div class="empty-state-icon">🏭</div><h3>No warehouses yet</h3><p>Create your first warehouse to get started</p></div>`;
+      } else {
+        warehouses.forEach(w => {
+          const s = whStock[w.id] || { total: 0, products: 0, zero: 0 };
+          html += `<div class="wh-card">
+            <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:4px">
+              <div class="wh-card-name">🏭 ${escHtml(w.name)}</div>
+              <button class="btn btn-sm btn-secondary" onclick="openEdit(${w.id})">Edit</button>
+            </div>
+            <div class="wh-card-loc">📍 ${escHtml(w.location)}</div>
+            <div class="wh-card-stat"><span>Total Stock</span><strong>${s.total.toLocaleString()}</strong></div>
+            <div class="wh-card-stat"><span>Products</span><strong>${s.products}</strong></div>
+            <div class="wh-card-stat"><span>Out of Stock</span><strong class="${s.zero > 0 ? 'qty-zero' : ''}">${s.zero}</strong></div>
+            <div class="wh-card-stat text-muted text-sm"><span>Created</span><span>${formatDate(w.created_at)}</span></div>
+          </div>`;
+        });
+      }
+      html += `</div>`;
+      document.getElementById('wh-content').innerHTML = html;
+    } catch (err) { toast(err.message, 'error'); }
+  }
+
+  document.getElementById('new-wh-btn').addEventListener('click', () => {
+    editId = null;
+    document.getElementById('wh-modal-title').textContent = 'New Warehouse';
+    document.getElementById('wh-name').value = '';
+    document.getElementById('wh-location').value = '';
+    hideAlert('wh-alert');
+    openModal('wh-modal');
+  });
+
+  function openEdit(id) {
+    const w = warehouses.find(x => x.id === id);
+    if (!w) return;
+    editId = id;
+    document.getElementById('wh-modal-title').textContent = 'Edit Warehouse';
+    document.getElementById('wh-name').value = w.name;
+    document.getElementById('wh-location').value = w.location;
+    hideAlert('wh-alert');
+    openModal('wh-modal');
+  }
+
+  document.getElementById('wh-save-btn').addEventListener('click', async () => {
+    const name = document.getElementById('wh-name').value.trim();
+    const location = document.getElementById('wh-location').value.trim();
+    if (!name || !location) { showAlert('wh-alert', 'Name and location are required'); return; }
+
+    const btn = document.getElementById('wh-save-btn');
+    btn.disabled = true;
+    try {
+      if (editId) await API.put(`/warehouses/${editId}`, { name, location });
+      else await API.post('/warehouses', { name, location });
+      closeModal('wh-modal');
+      toast(editId ? 'Warehouse updated!' : 'Warehouse created!', 'success');
+      await load();
+    } catch (err) { showAlert('wh-alert', err.message); }
+    btn.disabled = false;
+  });
+
+  load();
+</script>
+</body>
+</html>

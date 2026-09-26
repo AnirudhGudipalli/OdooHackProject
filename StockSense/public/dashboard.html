@@ -1,0 +1,191 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Dashboard — StockSense IMS</title>
+  <link rel="stylesheet" href="/css/main.css" />
+</head>
+<body>
+<div class="app-layout">
+  <div class="sidebar" id="sidebar"></div>
+  <div class="main-content">
+    <div class="page-header">
+      <div class="page-header-left">
+        <h1 id="page-title">Dashboard</h1>
+        <p id="page-subtitle">Loading…</p>
+      </div>
+      <div class="page-header-right">
+        <span id="header-badge" class="badge badge-manager"></span>
+      </div>
+    </div>
+    <div class="page-content">
+      <div id="dashboard-content">
+        <div style="text-align:center;padding:60px"><div class="spinner" style="width:36px;height:36px;border-width:3px"></div></div>
+      </div>
+    </div>
+  </div>
+</div>
+<script src="/js/api.js"></script>
+<script src="/js/utils.js"></script>
+<script src="/js/nav.js"></script>
+<script>
+  if (!requireAuth()) {}
+
+  const user = API.getUser();
+  NAV.render('sidebar');
+
+  document.getElementById('header-badge').textContent = user.role;
+  document.getElementById('header-badge').className = `badge badge-${user.role.toLowerCase()}`;
+
+  async function loadDashboard() {
+    try {
+      const data = await API.get('/dashboard');
+      if (user.role === 'MANAGER') renderManager(data);
+      else renderStaff(data);
+    } catch (err) {
+      document.getElementById('dashboard-content').innerHTML = `<div class="alert alert-danger">${escHtml(err.message)}</div>`;
+    }
+  }
+
+  function renderManager(d) {
+    document.getElementById('page-title').textContent = 'Manager Dashboard';
+    document.getElementById('page-subtitle').textContent = 'Company-wide inventory overview';
+
+    const k = d.kpis;
+    let html = `
+      <div class="kpi-grid">
+        <div class="kpi-card">
+          <div class="kpi-icon blue">📦</div>
+          <div><div class="kpi-label">Total Stock</div><div class="kpi-value">${k.total_stock.toLocaleString()}</div><div class="kpi-sub">units across all warehouses</div></div>
+        </div>
+        <div class="kpi-card">
+          <div class="kpi-icon yellow">⚠️</div>
+          <div><div class="kpi-label">Low Stock Items</div><div class="kpi-value">${k.low_stock_items}</div><div class="kpi-sub">below reorder level</div></div>
+        </div>
+        <div class="kpi-card">
+          <div class="kpi-icon red">🚨</div>
+          <div><div class="kpi-label">Out of Stock</div><div class="kpi-value">${k.out_of_stock_items}</div><div class="kpi-sub">items at zero quantity</div></div>
+        </div>
+        <div class="kpi-card">
+          <div class="kpi-icon green">📥</div>
+          <div><div class="kpi-label">Pending Receipts</div><div class="kpi-value">${k.pending_receipts}</div><div class="kpi-sub">awaiting completion</div></div>
+        </div>
+        <div class="kpi-card">
+          <div class="kpi-icon orange">📤</div>
+          <div><div class="kpi-label">Pending Deliveries</div><div class="kpi-value">${k.pending_deliveries}</div><div class="kpi-sub">awaiting completion</div></div>
+        </div>
+      </div>`;
+
+    // Warehouse summary
+    if (d.warehouse_summary?.length) {
+      html += `<div class="card mb-4" style="margin-bottom:20px">
+        <div class="card-header"><span class="card-title">🏭 Warehouse Overview</span></div>
+        <div class="card-body">
+          <div class="wh-grid">`;
+      d.warehouse_summary.forEach(w => {
+        html += `<div class="wh-card">
+          <div class="wh-card-name">${escHtml(w.name)}</div>
+          <div class="wh-card-stat"><span>Total Stock</span><strong>${parseInt(w.total_stock).toLocaleString()}</strong></div>
+          <div class="wh-card-stat"><span>Out of Stock</span><strong>${w.out_of_stock}</strong></div>
+        </div>`;
+      });
+      html += `</div></div></div>`;
+    }
+
+    // Recent operations in 2-column grid
+    html += `<div class="grid-2">`;
+
+    // Recent receipts
+    html += `<div class="card">
+      <div class="card-header"><span class="card-title">📥 Recent Receipts</span><a href="/receipts.html" class="btn btn-sm btn-secondary">View All</a></div>
+      <div class="table-wrapper">`;
+    if (d.recent_receipts?.length) {
+      html += `<table><thead><tr><th>Number</th><th>Supplier</th><th>Status</th><th>Date</th></tr></thead><tbody>`;
+      d.recent_receipts.forEach(r => {
+        html += `<tr>
+          <td><a href="/receipts.html" style="color:var(--primary)">${escHtml(r.receipt_number)}</a></td>
+          <td>${escHtml(r.supplier)}</td>
+          <td>${statusBadge(r.status)}</td>
+          <td class="text-muted text-sm">${formatDate(r.created_at)}</td>
+        </tr>`;
+      });
+      html += `</tbody></table>`;
+    } else {
+      html += `<div class="empty-state"><div class="empty-state-icon">📥</div><p>No receipts yet</p></div>`;
+    }
+    html += `</div></div>`;
+
+    // Recent deliveries
+    html += `<div class="card">
+      <div class="card-header"><span class="card-title">📤 Recent Deliveries</span><a href="/deliveries.html" class="btn btn-sm btn-secondary">View All</a></div>
+      <div class="table-wrapper">`;
+    if (d.recent_deliveries?.length) {
+      html += `<table><thead><tr><th>Number</th><th>Customer</th><th>Status</th><th>Date</th></tr></thead><tbody>`;
+      d.recent_deliveries.forEach(d2 => {
+        html += `<tr>
+          <td><a href="/deliveries.html" style="color:var(--primary)">${escHtml(d2.delivery_number)}</a></td>
+          <td>${escHtml(d2.customer)}</td>
+          <td>${statusBadge(d2.status)}</td>
+          <td class="text-muted text-sm">${formatDate(d2.created_at)}</td>
+        </tr>`;
+      });
+      html += `</tbody></table>`;
+    } else {
+      html += `<div class="empty-state"><div class="empty-state-icon">📤</div><p>No deliveries yet</p></div>`;
+    }
+    html += `</div></div>`;
+    html += `</div>`;
+
+    document.getElementById('dashboard-content').innerHTML = html;
+  }
+
+  function renderStaff(d) {
+    document.getElementById('page-title').textContent = 'Staff Dashboard';
+    document.getElementById('page-subtitle').textContent = d.warehouse?.name || 'Your Warehouse';
+
+    const k = d.kpis;
+    let html = `
+      <div class="kpi-grid">
+        <div class="kpi-card"><div class="kpi-icon blue">📦</div><div><div class="kpi-label">Total Stock</div><div class="kpi-value">${k.total_stock.toLocaleString()}</div></div></div>
+        <div class="kpi-card"><div class="kpi-icon yellow">⚠️</div><div><div class="kpi-label">Low Stock</div><div class="kpi-value">${k.low_stock_items}</div></div></div>
+        <div class="kpi-card"><div class="kpi-icon red">🚨</div><div><div class="kpi-label">Out of Stock</div><div class="kpi-value">${k.out_of_stock_items}</div></div></div>
+        <div class="kpi-card"><div class="kpi-icon green">📥</div><div><div class="kpi-label">Pending Receipts</div><div class="kpi-value">${k.pending_receipts}</div></div></div>
+        <div class="kpi-card"><div class="kpi-icon orange">📤</div><div><div class="kpi-label">Pending Deliveries</div><div class="kpi-value">${k.pending_deliveries}</div></div></div>
+      </div>
+      <div class="card mb-4" style="margin-bottom:20px">
+        <div class="card-header"><span class="card-title">⚡ Quick Actions</span></div>
+        <div class="card-body" style="display:flex;gap:12px;flex-wrap:wrap">
+          <a href="/receipts.html" class="btn btn-primary">📥 Process Receipt</a>
+          <a href="/deliveries.html" class="btn btn-primary">📤 Process Delivery</a>
+          <a href="/adjustments.html" class="btn btn-warning">🔄 Stock Count</a>
+          <a href="/movements.html" class="btn btn-secondary">📋 View Movements</a>
+        </div>
+      </div>`;
+
+    html += `<div class="card">
+      <div class="card-header"><span class="card-title">📋 Recent Movements</span></div>
+      <div class="table-wrapper">`;
+    if (d.recent_movements?.length) {
+      html += `<table><thead><tr><th>Type</th><th>Product</th><th>Quantity</th><th>Date</th></tr></thead><tbody>`;
+      d.recent_movements.forEach(m => {
+        html += `<tr>
+          <td>${movementBadge(m.movement_type)}</td>
+          <td>${escHtml(m.product_name)}</td>
+          <td class="font-semibold">${m.quantity > 0 ? '+' : ''}${m.quantity}</td>
+          <td class="text-muted text-sm">${formatDatetime(m.created_at)}</td>
+        </tr>`;
+      });
+      html += `</tbody></table>`;
+    } else {
+      html += `<div class="empty-state"><div class="empty-state-icon">📋</div><p>No movements yet</p></div>`;
+    }
+    html += `</div></div>`;
+
+    document.getElementById('dashboard-content').innerHTML = html;
+  }
+
+  loadDashboard();
+</script>
+</body>
+</html>

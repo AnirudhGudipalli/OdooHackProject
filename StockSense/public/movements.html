@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Move History — StockSense IMS</title>
+  <link rel="stylesheet" href="/css/main.css" />
+</head>
+<body>
+<div class="app-layout">
+  <div class="sidebar" id="sidebar"></div>
+  <div class="main-content">
+    <div class="page-header">
+      <div class="page-header-left">
+        <h1>Stock Movement History</h1>
+        <p>Complete audit trail of all stock changes</p>
+      </div>
+    </div>
+    <div class="page-content">
+      <div class="toolbar">
+        <div class="search-wrapper">
+          <span class="search-icon">🔍</span>
+          <input class="search-input" id="search" type="text" placeholder="Search product or reference…" />
+        </div>
+        <select class="form-control form-select" id="filter-type" style="width:180px">
+          <option value="">All Types</option>
+          <option>RECEIPT</option><option>DELIVERY</option><option>ADJUSTMENT</option>
+          <option>TRANSFER_IN</option><option>TRANSFER_OUT</option>
+        </select>
+        <div class="toolbar-spacer"></div>
+        <span id="count-label" class="text-sm text-muted"></span>
+      </div>
+      <div class="card">
+        <div class="table-wrapper" id="mov-table">
+          <div style="text-align:center;padding:60px"><div class="spinner" style="width:36px;height:36px;border-width:3px"></div></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script src="/js/api.js"></script>
+<script src="/js/utils.js"></script>
+<script src="/js/nav.js"></script>
+<script>
+  if (!requireAuth()) {}
+  NAV.render('sidebar');
+
+  let movements = [];
+
+  async function load() {
+    try {
+      movements = await API.get('/movements');
+      renderTable();
+    } catch (err) { toast(err.message, 'error'); }
+  }
+
+  function renderTable() {
+    const q = document.getElementById('search').value.toLowerCase();
+    const t = document.getElementById('filter-type').value;
+    let rows = movements;
+    if (q) rows = rows.filter(m => (m.product_name||'').toLowerCase().includes(q) || String(m.reference_id||'').includes(q) || (m.reference_type||'').toLowerCase().includes(q));
+    if (t) rows = rows.filter(m => m.movement_type === t);
+
+    document.getElementById('count-label').textContent = `${rows.length} records`;
+
+    if (!rows.length) {
+      document.getElementById('mov-table').innerHTML = `<div class="empty-state"><div class="empty-state-icon">📋</div><h3>No movements found</h3></div>`;
+      return;
+    }
+    let html = `<table><thead><tr>
+      <th>Date & Time</th><th>Product</th><th>SKU</th><th>Warehouse</th>
+      <th>Type</th><th>Quantity</th><th>Reference</th><th>Performed By</th>
+    </tr></thead><tbody>`;
+    rows.forEach(m => {
+      const qty = m.quantity;
+      const qtyStr = qty > 0 ? `<span class="qty-ok">+${qty}</span>` : `<span class="qty-zero">${qty}</span>`;
+      html += `<tr>
+        <td class="text-sm">${formatDatetime(m.created_at)}</td>
+        <td class="font-semibold">${escHtml(m.product_name)}</td>
+        <td><code style="font-size:12px;background:var(--bg);padding:2px 6px;border-radius:4px">${escHtml(m.sku)}</code></td>
+        <td class="text-muted">${escHtml(m.warehouse_name)}</td>
+        <td>${movementBadge(m.movement_type)}</td>
+        <td>${qtyStr}</td>
+        <td class="text-muted text-sm">${m.reference_type ? `${escHtml(m.reference_type)} #${m.reference_id}` : '—'}</td>
+        <td class="text-muted text-sm">${escHtml(m.performed_by_name || '—')}</td>
+      </tr>`;
+    });
+    html += `</tbody></table>`;
+    document.getElementById('mov-table').innerHTML = html;
+  }
+
+  document.getElementById('search').addEventListener('input', renderTable);
+  document.getElementById('filter-type').addEventListener('change', renderTable);
+
+  load();
+</script>
+</body>
+</html>

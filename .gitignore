@@ -1,5 +1,7 @@
+text
 node_modules/
 .env
-*.log
+.env.*
+!.env.example
+npm-debug.log*
 .DS_Store
-Thumbs.db
