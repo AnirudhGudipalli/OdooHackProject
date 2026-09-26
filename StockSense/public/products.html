@@ -1,0 +1,304 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Products — StockSense IMS</title>
+  <link rel="stylesheet" href="/css/main.css" />
+</head>
+<body>
+<div class="app-layout">
+  <div class="sidebar" id="sidebar"></div>
+  <div class="main-content">
+    <div class="page-header">
+      <div class="page-header-left">
+        <h1>Products</h1>
+        <p>Manage your product catalogue and inventory</p>
+      </div>
+      <div class="page-header-right">
+        <button class="btn btn-secondary btn-sm" id="cat-btn">+ Category</button>
+        <button class="btn btn-primary" id="new-product-btn" style="display:none">+ New Product</button>
+      </div>
+    </div>
+    <div class="page-content">
+      <div class="toolbar">
+        <div class="search-wrapper">
+          <span class="search-icon">🔍</span>
+          <input class="search-input" id="search" type="text" placeholder="Search products…" />
+        </div>
+        <select class="form-control form-select" id="filter-cat" style="width:180px">
+          <option value="">All Categories</option>
+        </select>
+        <div class="toolbar-spacer"></div>
+      </div>
+      <div class="card">
+        <div class="table-wrapper" id="products-table">
+          <div style="text-align:center;padding:60px"><div class="spinner" style="width:36px;height:36px;border-width:3px"></div></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- New/Edit Product Modal -->
+<div class="modal-overlay" id="product-modal" role="dialog" aria-modal="true" aria-hidden="true">
+  <div class="modal">
+    <div class="modal-header">
+      <h2 class="modal-title" id="product-modal-title">New Product</h2>
+      <button class="modal-close" onclick="closeModal('product-modal')">✕</button>
+    </div>
+    <div class="modal-body">
+      <div id="product-alert" class="alert alert-danger alert-hidden"></div>
+      <form id="product-form">
+        <div class="form-row">
+          <div class="form-group">
+            <label class="form-label">Product Name <span>*</span></label>
+            <input class="form-control" id="p-name" required placeholder="e.g. Laptop Pro" />
+          </div>
+          <div class="form-group">
+            <label class="form-label">SKU <span>*</span></label>
+            <input class="form-control" id="p-sku" required placeholder="e.g. ELEC-LAP-001" />
+          </div>
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label class="form-label">Category</label>
+            <select class="form-control form-select" id="p-category">
+              <option value="">No category</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Unit of Measure <span>*</span></label>
+            <input class="form-control" id="p-unit" required placeholder="e.g. units, pcs, kg" />
+          </div>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Reorder Level</label>
+          <input class="form-control" id="p-reorder" type="number" min="0" value="0" />
+          <div class="form-hint">Alert when stock falls at or below this quantity</div>
+        </div>
+        <hr style="border:none;border-top:1px solid var(--border);margin:16px 0">
+        <div id="initial-stock-section">
+          <p class="text-sm text-muted mb-4" style="margin-bottom:12px">Optional: Set initial stock when creating</p>
+          <div class="form-row">
+            <div class="form-group">
+              <label class="form-label">Initial Stock Qty</label>
+              <input class="form-control" id="p-initial-stock" type="number" min="0" value="" placeholder="0" />
+            </div>
+            <div class="form-group">
+              <label class="form-label">Warehouse</label>
+              <select class="form-control form-select" id="p-warehouse">
+                <option value="">Select warehouse…</option>
+              </select>
+            </div>
+          </div>
+        </div>
+      </form>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary" onclick="closeModal('product-modal')">Cancel</button>
+      <button class="btn btn-primary" id="product-save-btn">Save Product</button>
+    </div>
+  </div>
+</div>
+
+<!-- Category Modal -->
+<div class="modal-overlay" id="cat-modal" role="dialog" aria-modal="true" aria-hidden="true">
+  <div class="modal" style="max-width:420px">
+    <div class="modal-header">
+      <h2 class="modal-title">New Category</h2>
+      <button class="modal-close" onclick="closeModal('cat-modal')">✕</button>
+    </div>
+    <div class="modal-body">
+      <div id="cat-alert" class="alert alert-danger alert-hidden"></div>
+      <div class="form-group">
+        <label class="form-label">Category Name <span>*</span></label>
+        <input class="form-control" id="cat-name" required />
+      </div>
+      <div class="form-group">
+        <label class="form-label">Description</label>
+        <input class="form-control" id="cat-desc" />
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary" onclick="closeModal('cat-modal')">Cancel</button>
+      <button class="btn btn-primary" id="cat-save-btn">Create Category</button>
+    </div>
+  </div>
+</div>
+
+<script src="/js/api.js"></script>
+<script src="/js/utils.js"></script>
+<script src="/js/nav.js"></script>
+<script>
+  if (!requireAuth()) {}
+  const user = API.getUser();
+  NAV.render('sidebar');
+
+  let products = [], categories = [], warehouses = [], editId = null;
+
+  async function load() {
+    try {
+      [products, categories, warehouses] = await Promise.all([
+        API.get('/products'),
+        API.get('/categories'),
+        API.get('/warehouses'),
+      ]);
+      populateCategorySelects();
+      populateWarehouseSelect();
+      renderTable();
+    } catch (err) { toast(err.message, 'error'); }
+  }
+
+  function populateCategorySelects() {
+    const filter = document.getElementById('filter-cat');
+    const pCat = document.getElementById('p-category');
+    filter.innerHTML = '<option value="">All Categories</option>' +
+      categories.map(c => `<option value="${c.id}">${escHtml(c.name)}</option>`).join('');
+    pCat.innerHTML = '<option value="">No category</option>' +
+      categories.map(c => `<option value="${c.id}">${escHtml(c.name)}</option>`).join('');
+  }
+
+  function populateWarehouseSelect() {
+    const sel = document.getElementById('p-warehouse');
+    sel.innerHTML = '<option value="">Select warehouse…</option>' +
+      warehouses.map(w => `<option value="${w.id}">${escHtml(w.name)}</option>`).join('');
+  }
+
+  function getStatus(qty, reorder) {
+    if (qty == 0) return stockBadge(0, reorder);
+    if (qty <= reorder) return stockBadge(qty, reorder);
+    return stockBadge(qty, reorder);
+  }
+
+  function qtyClass(qty, reorder) {
+    if (qty == 0) return 'qty-zero';
+    if (qty <= reorder) return 'qty-low';
+    return 'qty-ok';
+  }
+
+  function renderTable(filter = '') {
+    const catFilter = document.getElementById('filter-cat').value;
+    let rows = products;
+    if (filter) rows = rows.filter(p => p.name.toLowerCase().includes(filter) || p.sku.toLowerCase().includes(filter));
+    if (catFilter) rows = rows.filter(p => String(p.category_id) === catFilter);
+
+    const isManager = user.role === 'MANAGER';
+    if (isManager) document.getElementById('new-product-btn').style.display = 'inline-flex';
+
+    if (!rows.length) {
+      document.getElementById('products-table').innerHTML = `<div class="empty-state"><div class="empty-state-icon">📦</div><h3>No products found</h3><p>Try adjusting your search or filters</p></div>`;
+      return;
+    }
+
+    let html = `<table><thead><tr>
+      <th>Product</th><th>SKU</th><th>Category</th><th>Unit</th>
+      <th>Total Stock</th><th>Status</th><th>Reorder Level</th>
+      ${isManager ? '<th>Actions</th>' : ''}
+    </tr></thead><tbody>`;
+
+    rows.forEach(p => {
+      const qty = parseInt(p.total_stock || 0);
+      html += `<tr>
+        <td class="font-semibold">${escHtml(p.name)}</td>
+        <td><code style="font-size:12px;background:var(--bg);padding:2px 6px;border-radius:4px">${escHtml(p.sku)}</code></td>
+        <td>${escHtml(p.category_name || '—')}</td>
+        <td class="text-muted">${escHtml(p.unit)}</td>
+        <td class="${qtyClass(qty, p.reorder_level)}">${qty.toLocaleString()}</td>
+        <td>${getStatus(qty, p.reorder_level)}</td>
+        <td class="text-muted">${p.reorder_level}</td>
+        ${isManager ? `<td>
+          <button class="btn btn-sm btn-secondary" onclick="openEdit(${p.id})">Edit</button>
+          <button class="btn btn-sm btn-danger" onclick="deleteProduct(${p.id},'${escHtml(p.name)}')">Del</button>
+        </td>` : ''}
+      </tr>`;
+    });
+    html += `</tbody></table>`;
+    document.getElementById('products-table').innerHTML = html;
+  }
+
+  // Search & filter
+  document.getElementById('search').addEventListener('input', e => renderTable(e.target.value.toLowerCase()));
+  document.getElementById('filter-cat').addEventListener('change', () => renderTable(document.getElementById('search').value.toLowerCase()));
+
+  // New product
+  document.getElementById('new-product-btn').addEventListener('click', () => {
+    editId = null;
+    document.getElementById('product-modal-title').textContent = 'New Product';
+    document.getElementById('product-form').reset();
+    document.getElementById('initial-stock-section').style.display = 'block';
+    hideAlert('product-alert');
+    openModal('product-modal');
+  });
+
+  function openEdit(id) {
+    const p = products.find(x => x.id === id);
+    if (!p) return;
+    editId = id;
+    document.getElementById('product-modal-title').textContent = 'Edit Product';
+    document.getElementById('p-name').value = p.name;
+    document.getElementById('p-sku').value = p.sku;
+    document.getElementById('p-category').value = p.category_id || '';
+    document.getElementById('p-unit').value = p.unit;
+    document.getElementById('p-reorder').value = p.reorder_level;
+    document.getElementById('initial-stock-section').style.display = 'none';
+    hideAlert('product-alert');
+    openModal('product-modal');
+  }
+
+  document.getElementById('product-save-btn').addEventListener('click', async () => {
+    const body = {
+      name: document.getElementById('p-name').value.trim(),
+      sku: document.getElementById('p-sku').value.trim(),
+      category_id: document.getElementById('p-category').value || null,
+      unit: document.getElementById('p-unit').value.trim(),
+      reorder_level: parseInt(document.getElementById('p-reorder').value) || 0,
+    };
+    if (!editId) {
+      const is = document.getElementById('p-initial-stock').value;
+      const wh = document.getElementById('p-warehouse').value;
+      if (is) { body.initial_stock = parseInt(is); body.warehouse_id = wh ? parseInt(wh) : null; }
+    }
+
+    const btn = document.getElementById('product-save-btn');
+    btn.disabled = true;
+    try {
+      if (editId) await API.put(`/products/${editId}`, body);
+      else await API.post('/products', body);
+      closeModal('product-modal');
+      toast(editId ? 'Product updated!' : 'Product created!', 'success');
+      await load();
+    } catch (err) {
+      showAlert('product-alert', err.message);
+      btn.disabled = false;
+    }
+    btn.disabled = false;
+  });
+
+  async function deleteProduct(id, name) {
+    if (!confirm(`Delete "${name}"? This cannot be undone.`)) return;
+    try {
+      await API.del(`/products/${id}`);
+      toast('Product deleted', 'success');
+      await load();
+    } catch (err) { toast(err.message, 'error'); }
+  }
+
+  // Category
+  document.getElementById('cat-btn').addEventListener('click', () => openModal('cat-modal'));
+  document.getElementById('cat-save-btn').addEventListener('click', async () => {
+    const name = document.getElementById('cat-name').value.trim();
+    const desc = document.getElementById('cat-desc').value.trim();
+    if (!name) { showAlert('cat-alert', 'Name is required'); return; }
+    try {
+      await API.post('/categories', { name, description: desc });
+      closeModal('cat-modal');
+      toast('Category created!', 'success');
+      await load();
+    } catch (err) { showAlert('cat-alert', err.message); }
+  });
+
+  load();
+</script>
+</body>
+</html>

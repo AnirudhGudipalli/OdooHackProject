@@ -1,0 +1,71 @@
+# Tasks
+
+## Task List
+
+- [x] 1. Create complete project structure
+- [-] 2. Set up Express + PostgreSQL backend foundation
+  - [x] 2.1 Initialize package.json and install dependencies
+  - [x] 2.2 Create db.js with PostgreSQL Pool connection
+  - [x] 2.3 Create server.js with Express setup, middleware, static serving
+  - [x] 2.4 Create .env.example file
+- [-] 3. Create all database tables
+  - [x] 3.1 Create database/init.sql with all table definitions and constraints
+  - [x] 3.2 Auto-create tables on server startup
+- [-] 4. Authentication foundation
+  - [x] 4.1 Create auth routes (signup, login, forgot-password, verify-otp, reset-password)
+  - [x] 4.2 Create auth controller with bcrypt and JWT
+  - [x] 4.3 Create auth middleware for JWT validation and role-based access
+- [-] 5. Seed script
+  - [x] 5.1 Create database/seed.js with demo warehouses, categories, products, users
+- [ ] 6. Product and Category APIs
+  - [x] 6.1 Create products routes and controller (CRUD)
+  - [x] 6.2 Create categories routes and controller
+- [ ] 7. Warehouse API
+  - [x] 7.1 Create warehouses routes and controller
+- [ ] 8. Stock APIs
+  - [x] 8.1 Create stock routes and controller
+- [ ] 9. Receipts API
+  - [x] 9.1 Create receipts routes and controller with validation workflow
+- [ ] 10. Deliveries API
+  - [x] 10.1 Create deliveries routes and controller with validation workflow
+- [ ] 11. Adjustments API
+  - [x] 11.1 Create adjustments routes and controller with validation workflow
+- [ ] 12. Stock Movements API
+  - [x] 12.1 Create movements routes and controller
+- [ ] 13. Dashboard API
+  - [x] 13.1 Create dashboard routes and controller for Manager and Staff KPIs
+- [ ] 14. Frontend — Authentication pages
+  - [ ] 14.1 Create login.html with professional design
+  - [ ] 14.2 Create signup.html
+  - [ ] 14.3 Create index.html (redirect to login)
+  - [ ] 14.4 Create auth.js frontend script
+- [ ] 15. Frontend — CSS design system
+  - [ ] 15.1 Create main CSS with sidebar layout, cards, tables, modals, badges
+- [ ] 16. Frontend — Manager Dashboard
+  - [ ] 16.1 Create dashboard.html with KPI cards and recent operations
+  - [ ] 16.2 Create dashboard.js frontend script
+- [ ] 17. Frontend — Products page
+  - [ ] 17.1 Create products.html with product list and create/edit modals
+  - [ ] 17.2 Create products.js frontend script
+- [ ] 18. Frontend — Receipts page
+  - [ ] 18.1 Create receipts.html with receipt list and workflow modals
+  - [ ] 18.2 Create receipts.js frontend script
+- [ ] 19. Frontend — Deliveries page
+  - [ ] 19.1 Create deliveries.html
+  - [ ] 19.2 Create deliveries.js frontend script
+- [ ] 20. Frontend — Adjustments page
+  - [ ] 20.1 Create adjustments.html
+  - [ ] 20.2 Create adjustments.js frontend script
+- [ ] 21. Frontend — Movements page
+  - [ ] 21.1 Create movements.html
+  - [ ] 21.2 Create movements.js frontend script
+- [ ] 22. Frontend — Profile page
+  - [ ] 22.1 Create profile.html
+  - [ ] 22.2 Create profile.js frontend script
+- [ ] 23. Frontend — Warehouses page (Manager only)
+  - [ ] 23.1 Create warehouses.html
+  - [ ] 23.2 Create warehouses.js frontend script
+- [ ] 24. Frontend — common navigation and utilities
+  - [ ] 24.1 Create nav.js with sidebar rendering and active state
+  - [ ] 24.2 Create api.js with fetch wrapper and auth header injection
+- [x] 25. README.md

@@ -1,0 +1,280 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Receipts — StockSense IMS</title>
+  <link rel="stylesheet" href="/css/main.css" />
+</head>
+<body>
+<div class="app-layout">
+  <div class="sidebar" id="sidebar"></div>
+  <div class="main-content">
+    <div class="page-header">
+      <div class="page-header-left">
+        <h1>Receipts</h1>
+        <p>Manage inbound stock from suppliers</p>
+      </div>
+      <div class="page-header-right">
+        <button class="btn btn-primary" id="new-receipt-btn">+ New Receipt</button>
+      </div>
+    </div>
+    <div class="page-content">
+      <div class="toolbar">
+        <div class="search-wrapper">
+          <span class="search-icon">🔍</span>
+          <input class="search-input" id="search" type="text" placeholder="Search receipts…" />
+        </div>
+        <select class="form-control form-select" id="filter-status" style="width:160px">
+          <option value="">All Statuses</option>
+          <option>DRAFT</option><option>WAITING</option><option>READY</option><option>DONE</option><option>CANCELED</option>
+        </select>
+        <div class="toolbar-spacer"></div>
+      </div>
+      <div class="card">
+        <div class="table-wrapper" id="receipts-table">
+          <div style="text-align:center;padding:60px"><div class="spinner" style="width:36px;height:36px;border-width:3px"></div></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Create Receipt Modal -->
+<div class="modal-overlay" id="create-modal" role="dialog" aria-modal="true" aria-hidden="true">
+  <div class="modal modal-lg">
+    <div class="modal-header">
+      <h2 class="modal-title">New Receipt</h2>
+      <button class="modal-close" onclick="closeModal('create-modal')">✕</button>
+    </div>
+    <div class="modal-body">
+      <div id="create-alert" class="alert alert-danger alert-hidden"></div>
+      <div class="form-row">
+        <div class="form-group">
+          <label class="form-label">Supplier <span>*</span></label>
+          <input class="form-control" id="r-supplier" required placeholder="Supplier name" />
+        </div>
+        <div class="form-group" id="r-wh-group">
+          <label class="form-label">Warehouse <span>*</span></label>
+          <select class="form-control form-select" id="r-warehouse"></select>
+        </div>
+      </div>
+      <div style="margin-bottom:12px">
+        <label class="form-label">Items <span>*</span></label>
+        <div id="items-container"></div>
+        <button type="button" class="btn btn-secondary btn-sm mt-4" id="add-item-btn">+ Add Item</button>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary" onclick="closeModal('create-modal')">Cancel</button>
+      <button class="btn btn-primary" id="create-save-btn">Create Receipt</button>
+    </div>
+  </div>
+</div>
+
+<!-- Detail/Action Modal -->
+<div class="modal-overlay" id="detail-modal" role="dialog" aria-modal="true" aria-hidden="true">
+  <div class="modal modal-lg">
+    <div class="modal-header">
+      <h2 class="modal-title" id="detail-title">Receipt Detail</h2>
+      <button class="modal-close" onclick="closeModal('detail-modal')">✕</button>
+    </div>
+    <div class="modal-body" id="detail-body"></div>
+    <div class="modal-footer" id="detail-footer"></div>
+  </div>
+</div>
+
+<script src="/js/api.js"></script>
+<script src="/js/utils.js"></script>
+<script src="/js/nav.js"></script>
+<script>
+  if (!requireAuth()) {}
+  const user = API.getUser();
+  NAV.render('sidebar');
+
+  let receipts = [], products = [], warehouses = [];
+  let itemCount = 0;
+
+  async function load() {
+    try {
+      [receipts, products, warehouses] = await Promise.all([
+        API.get('/receipts'),
+        API.get('/products'),
+        API.get('/warehouses'),
+      ]);
+      populateWarehouse();
+      renderTable();
+    } catch (err) { toast(err.message, 'error'); }
+  }
+
+  function populateWarehouse() {
+    const sel = document.getElementById('r-warehouse');
+    const grp = document.getElementById('r-wh-group');
+    if (user.role === 'STAFF') {
+      grp.style.display = 'none';
+    } else {
+      sel.innerHTML = '<option value="">Select warehouse…</option>' +
+        warehouses.map(w => `<option value="${w.id}">${escHtml(w.name)}</option>`).join('');
+    }
+  }
+
+  function renderTable() {
+    const q = document.getElementById('search').value.toLowerCase();
+    const st = document.getElementById('filter-status').value;
+    let rows = receipts;
+    if (q) rows = rows.filter(r => r.receipt_number.toLowerCase().includes(q) || r.supplier.toLowerCase().includes(q));
+    if (st) rows = rows.filter(r => r.status === st);
+
+    if (!rows.length) {
+      document.getElementById('receipts-table').innerHTML = `<div class="empty-state"><div class="empty-state-icon">📥</div><h3>No receipts found</h3></div>`;
+      return;
+    }
+    let html = `<table><thead><tr><th>Receipt #</th><th>Supplier</th><th>Warehouse</th><th>Items</th><th>Status</th><th>Created</th><th>Actions</th></tr></thead><tbody>`;
+    rows.forEach(r => {
+      html += `<tr>
+        <td><strong style="color:var(--primary)">${escHtml(r.receipt_number)}</strong></td>
+        <td>${escHtml(r.supplier)}</td>
+        <td>${escHtml(r.warehouse_name)}</td>
+        <td>${r.item_count}</td>
+        <td>${statusBadge(r.status)}</td>
+        <td class="text-muted text-sm">${formatDate(r.created_at)}</td>
+        <td>
+          <button class="btn btn-sm btn-secondary" onclick="viewReceipt(${r.id})">View</button>
+          ${r.status !== 'DONE' && r.status !== 'CANCELED' ? `<button class="btn btn-sm btn-primary" onclick="advanceStatus(${r.id},'${r.status}')">Advance</button>` : ''}
+          ${r.status === 'READY' ? `<button class="btn btn-sm btn-success" onclick="validateReceipt(${r.id})">✅ Validate</button>` : ''}
+        </td>
+      </tr>`;
+    });
+    html += `</tbody></table>`;
+    document.getElementById('receipts-table').innerHTML = html;
+  }
+
+  document.getElementById('search').addEventListener('input', renderTable);
+  document.getElementById('filter-status').addEventListener('change', renderTable);
+
+  // Add item row
+  function addItemRow() {
+    itemCount++;
+    const div = document.createElement('div');
+    div.className = 'item-row';
+    div.id = `item-row-${itemCount}`;
+    div.innerHTML = `
+      <select class="form-control form-select" name="product" required>
+        <option value="">Select product…</option>
+        ${products.map(p => `<option value="${p.id}">${escHtml(p.name)} (${p.sku})</option>`).join('')}
+      </select>
+      <input class="form-control" type="number" name="quantity" min="1" value="1" required style="width:80px" />
+      <button type="button" class="btn btn-sm btn-danger btn-icon" onclick="this.closest('.item-row').remove()">✕</button>
+    `;
+    document.getElementById('items-container').appendChild(div);
+  }
+
+  document.getElementById('add-item-btn').addEventListener('click', addItemRow);
+
+  document.getElementById('new-receipt-btn').addEventListener('click', () => {
+    document.getElementById('r-supplier').value = '';
+    document.getElementById('items-container').innerHTML = '';
+    itemCount = 0;
+    hideAlert('create-alert');
+    addItemRow();
+    openModal('create-modal');
+  });
+
+  document.getElementById('create-save-btn').addEventListener('click', async () => {
+    const supplier = document.getElementById('r-supplier').value.trim();
+    const warehouse_id = user.role === 'STAFF' ? null : document.getElementById('r-warehouse').value;
+    const rows = document.querySelectorAll('#items-container .item-row');
+    const items = [];
+    let valid = true;
+    rows.forEach(row => {
+      const pid = row.querySelector('[name=product]').value;
+      const qty = parseInt(row.querySelector('[name=quantity]').value);
+      if (!pid || !qty || qty < 1) { valid = false; return; }
+      items.push({ product_id: parseInt(pid), quantity: qty });
+    });
+    if (!supplier) { showAlert('create-alert', 'Supplier is required'); return; }
+    if (!valid || items.length === 0) { showAlert('create-alert', 'Add at least one valid item'); return; }
+    if (user.role === 'MANAGER' && !warehouse_id) { showAlert('create-alert', 'Select a warehouse'); return; }
+
+    const btn = document.getElementById('create-save-btn');
+    btn.disabled = true;
+    try {
+      await API.post('/receipts', { supplier, warehouse_id: warehouse_id ? parseInt(warehouse_id) : undefined, items });
+      closeModal('create-modal');
+      toast('Receipt created!', 'success');
+      await load();
+    } catch (err) { showAlert('create-alert', err.message); }
+    btn.disabled = false;
+  });
+
+  async function viewReceipt(id) {
+    try {
+      const r = await API.get(`/receipts/${id}`);
+      document.getElementById('detail-title').textContent = r.receipt_number;
+      let body = `
+        <div class="detail-grid">
+          <div class="detail-item"><label>Supplier</label><span>${escHtml(r.supplier)}</span></div>
+          <div class="detail-item"><label>Warehouse</label><span>${escHtml(r.warehouse_name)}</span></div>
+          <div class="detail-item"><label>Status</label><span>${statusBadge(r.status)}</span></div>
+          <div class="detail-item"><label>Created</label><span>${formatDatetime(r.created_at)}</span></div>
+          ${r.validated_at ? `<div class="detail-item"><label>Validated</label><span>${formatDatetime(r.validated_at)}</span></div>` : ''}
+        </div>
+        <h4 style="margin-bottom:10px">Items</h4>
+        <table><thead><tr><th>Product</th><th>SKU</th><th>Unit</th><th>Qty</th></tr></thead><tbody>`;
+      (r.items||[]).forEach(it => {
+        body += `<tr><td>${escHtml(it.product_name)}</td><td><code>${escHtml(it.sku)}</code></td><td>${escHtml(it.unit)}</td><td class="font-semibold">${it.quantity}</td></tr>`;
+      });
+      body += `</tbody></table>`;
+      document.getElementById('detail-body').innerHTML = body;
+
+      const NEXT = { DRAFT: 'WAITING', WAITING: 'READY', READY: 'DONE' };
+      let footer = `<button class="btn btn-secondary" onclick="closeModal('detail-modal')">Close</button>`;
+      if (r.status !== 'DONE' && r.status !== 'CANCELED') {
+        const next = NEXT[r.status];
+        if (next && next !== 'DONE') footer += `<button class="btn btn-primary" onclick="advanceStatus(${r.id},'${r.status}')">Move to ${next}</button>`;
+        if (r.status !== 'DRAFT') footer += `<button class="btn btn-secondary" onclick="cancelReceipt(${r.id})">Cancel</button>`;
+        if (r.status === 'READY') footer += `<button class="btn btn-success" onclick="validateReceipt(${r.id})">✅ Validate & Complete</button>`;
+      }
+      document.getElementById('detail-footer').innerHTML = footer;
+      openModal('detail-modal');
+    } catch (err) { toast(err.message, 'error'); }
+  }
+
+  async function advanceStatus(id, current) {
+    const NEXT = { DRAFT: 'WAITING', WAITING: 'READY' };
+    const next = NEXT[current];
+    if (!next) return;
+    try {
+      await API.put(`/receipts/${id}`, { status: next });
+      toast(`Moved to ${next}`, 'success');
+      closeModal('detail-modal');
+      await load();
+    } catch (err) { toast(err.message, 'error'); }
+  }
+
+  async function cancelReceipt(id) {
+    if (!confirm('Cancel this receipt?')) return;
+    try {
+      await API.put(`/receipts/${id}`, { status: 'CANCELED' });
+      toast('Receipt canceled', 'warning');
+      closeModal('detail-modal');
+      await load();
+    } catch (err) { toast(err.message, 'error'); }
+  }
+
+  async function validateReceipt(id) {
+    if (!confirm('Validate this receipt? Stock will be increased.')) return;
+    showLoading();
+    try {
+      await API.post(`/receipts/${id}/validate`);
+      toast('Receipt validated! Stock updated.', 'success');
+      closeModal('detail-modal');
+      await load();
+    } catch (err) { toast(err.message, 'error'); }
+    hideLoading();
+  }
+
+  load();
+</script>
+</body>
+</html>

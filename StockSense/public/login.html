@@ -1,0 +1,193 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Login — StockSense IMS</title>
+  <link rel="stylesheet" href="/css/main.css" />
+  <style>
+    .forgot-link { font-size: 13px; color: var(--primary); cursor: pointer; }
+    .forgot-link:hover { text-decoration: underline; }
+    .step { display: none; }
+    .step.active { display: block; }
+  </style>
+</head>
+<body class="auth-page">
+  <div class="auth-card">
+    <div class="auth-logo">
+      <div class="auth-logo-icon">📦</div>
+      <div class="auth-logo-text">
+        <h1>StockSense</h1>
+        <p>Inventory Management System</p>
+      </div>
+    </div>
+
+    <!-- Step 1: Login -->
+    <div id="step-login" class="step active">
+      <h2 class="auth-title">Welcome back</h2>
+      <p class="auth-subtitle">Sign in to your account to continue</p>
+      <div id="login-alert" class="alert alert-danger alert-hidden"></div>
+      <form id="login-form">
+        <div class="form-group">
+          <label class="form-label" for="email">Email address <span>*</span></label>
+          <input class="form-control" id="email" type="email" placeholder="you@company.com" required autocomplete="email" />
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="password">Password <span>*</span></label>
+          <input class="form-control" id="password" type="password" placeholder="••••••••" required autocomplete="current-password" />
+          <div style="text-align:right;margin-top:6px">
+            <a class="forgot-link" id="forgot-trigger">Forgot password?</a>
+          </div>
+        </div>
+        <button type="submit" class="btn btn-primary btn-block btn-lg" id="login-btn">Sign in</button>
+      </form>
+      <div class="auth-link">Don't have an account? <a href="/signup.html">Create one</a></div>
+    </div>
+
+    <!-- Step 2: Forgot password -->
+    <div id="step-forgot" class="step">
+      <h2 class="auth-title">Reset password</h2>
+      <p class="auth-subtitle">Enter your email and we'll send you an OTP</p>
+      <div id="forgot-alert" class="alert alert-danger alert-hidden"></div>
+      <form id="forgot-form">
+        <div class="form-group">
+          <label class="form-label">Email address <span>*</span></label>
+          <input class="form-control" id="forgot-email" type="email" placeholder="you@company.com" required />
+        </div>
+        <button type="submit" class="btn btn-primary btn-block btn-lg">Send OTP</button>
+      </form>
+      <div class="auth-link"><a id="back-to-login">← Back to login</a></div>
+    </div>
+
+    <!-- Step 3: Enter OTP -->
+    <div id="step-otp" class="step">
+      <h2 class="auth-title">Enter OTP</h2>
+      <p class="auth-subtitle">Check your email (or API response in dev mode)</p>
+      <div id="dev-otp-hint" class="alert alert-info alert-hidden" style="font-family:monospace;font-size:15px"></div>
+      <div id="otp-alert" class="alert alert-danger alert-hidden"></div>
+      <form id="otp-form">
+        <div class="form-group">
+          <label class="form-label">6-digit OTP <span>*</span></label>
+          <input class="form-control otp-box" id="otp-input" type="text" maxlength="6" placeholder="000000" required />
+        </div>
+        <button type="submit" class="btn btn-primary btn-block btn-lg">Verify OTP</button>
+      </form>
+    </div>
+
+    <!-- Step 4: New password -->
+    <div id="step-reset" class="step">
+      <h2 class="auth-title">New password</h2>
+      <p class="auth-subtitle">Choose a strong password</p>
+      <div id="reset-alert" class="alert alert-danger alert-hidden"></div>
+      <form id="reset-form">
+        <div class="form-group">
+          <label class="form-label">New Password <span>*</span></label>
+          <input class="form-control" id="new-password" type="password" placeholder="Min 8 characters" required minlength="8" />
+        </div>
+        <div class="form-group">
+          <label class="form-label">Confirm Password <span>*</span></label>
+          <input class="form-control" id="confirm-password" type="password" placeholder="Repeat password" required />
+        </div>
+        <button type="submit" class="btn btn-primary btn-block btn-lg">Reset Password</button>
+      </form>
+    </div>
+  </div>
+
+  <script src="/js/api.js"></script>
+  <script>
+    // Redirect if already logged in
+    if (API.isLoggedIn()) {
+      window.location.href = '/dashboard.html';
+    }
+
+    let resetEmail = '';
+    let verifiedOtp = '';
+
+    function showStep(id) {
+      document.querySelectorAll('.step').forEach(s => s.classList.remove('active'));
+      document.getElementById(id).classList.add('active');
+    }
+
+    function setBtn(id, loading) {
+      const btn = document.getElementById(id);
+      if (!btn) return;
+      btn.disabled = loading;
+      btn.textContent = loading ? 'Please wait…' : btn.dataset.label || btn.textContent;
+    }
+
+    // ── Login ──────────────────────────────────────────────────────────────────
+    document.getElementById('login-form').addEventListener('submit', async e => {
+      e.preventDefault();
+      const email = document.getElementById('email').value.trim();
+      const password = document.getElementById('password').value;
+      const btn = document.getElementById('login-btn');
+      btn.disabled = true; btn.textContent = 'Signing in…';
+      try {
+        const data = await API.post('/auth/login', { email, password });
+        API.saveSession(data.token, data.user);
+        window.location.href = '/dashboard.html';
+      } catch (err) {
+        document.getElementById('login-alert').textContent = err.message;
+        document.getElementById('login-alert').classList.remove('alert-hidden');
+        btn.disabled = false; btn.textContent = 'Sign in';
+      }
+    });
+
+    // ── Forgot ─────────────────────────────────────────────────────────────────
+    document.getElementById('forgot-trigger').addEventListener('click', () => showStep('step-forgot'));
+    document.getElementById('back-to-login').addEventListener('click', () => showStep('step-login'));
+
+    document.getElementById('forgot-form').addEventListener('submit', async e => {
+      e.preventDefault();
+      resetEmail = document.getElementById('forgot-email').value.trim();
+      try {
+        const data = await API.post('/auth/forgot-password', { email: resetEmail });
+        if (data.otp) {
+          const hint = document.getElementById('dev-otp-hint');
+          hint.textContent = '🔑 Dev OTP: ' + data.otp;
+          hint.classList.remove('alert-hidden');
+        }
+        showStep('step-otp');
+      } catch (err) {
+        document.getElementById('forgot-alert').textContent = err.message;
+        document.getElementById('forgot-alert').classList.remove('alert-hidden');
+      }
+    });
+
+    // ── OTP ────────────────────────────────────────────────────────────────────
+    document.getElementById('otp-form').addEventListener('submit', async e => {
+      e.preventDefault();
+      verifiedOtp = document.getElementById('otp-input').value.trim();
+      try {
+        await API.post('/auth/verify-otp', { email: resetEmail, otp: verifiedOtp });
+        showStep('step-reset');
+      } catch (err) {
+        document.getElementById('otp-alert').textContent = err.message;
+        document.getElementById('otp-alert').classList.remove('alert-hidden');
+      }
+    });
+
+    // ── Reset ──────────────────────────────────────────────────────────────────
+    document.getElementById('reset-form').addEventListener('submit', async e => {
+      e.preventDefault();
+      const np = document.getElementById('new-password').value;
+      const cp = document.getElementById('confirm-password').value;
+      if (np !== cp) {
+        document.getElementById('reset-alert').textContent = 'Passwords do not match';
+        document.getElementById('reset-alert').classList.remove('alert-hidden');
+        return;
+      }
+      try {
+        await API.post('/auth/reset-password', { email: resetEmail, otp: verifiedOtp, newPassword: np });
+        showStep('step-login');
+        document.getElementById('login-alert').className = 'alert alert-success';
+        document.getElementById('login-alert').textContent = '✅ Password reset! Please sign in.';
+        document.getElementById('login-alert').classList.remove('alert-hidden');
+      } catch (err) {
+        document.getElementById('reset-alert').textContent = err.message;
+        document.getElementById('reset-alert').classList.remove('alert-hidden');
+      }
+    });
+  </script>
+</body>
+</html>
